@@ -1,4 +1,4 @@
-const CACHE = 'cift-altyazi-v4';
+const CACHE = 'cift-altyazi-v5';
 const ASSETS = ['./', './index.html', './app.js', './manifest.webmanifest', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -13,17 +13,14 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Önce önbellek, arkada güncelle. İnternet yokken uygulama yine açılır.
+// Önce internet (güncel sürüm), internet yoksa önbellek. Uygulama internetsiz de açılır.
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(hit => {
-      const net = fetch(e.request).then(r => {
-        if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
-        return r;
-      }).catch(() => hit);
-      return hit || net;
-    })
+    fetch(e.request, { cache: 'no-cache' }).then(r => {
+      if (r.ok) { const copy = r.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
+      return r;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });

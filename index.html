@@ -26,7 +26,7 @@
     --accent: #ffc857; --accent-ink: #1b1400; --danger: #ff7a70; color-scheme: dark; }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; max-width: 100%; overflow-x: hidden; }
 body {
   background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.45;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -82,7 +82,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---- oynatıcı ---- */
-.player { position: fixed; inset: 0; background: var(--stage); color: var(--p-ink); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; z-index: 20; overflow: hidden;
+.player { position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100%; max-width: 100%; background: var(--stage); color: var(--p-ink); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; z-index: 20; overflow: hidden;
   padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
 .pbar { display: flex; align-items: center; gap: 10px; padding: 8px 18px 4px; }
@@ -112,7 +112,10 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 .player.no-tr .cue .tr, .player.no-tr #ovTr { display: none; }
 .player.blur .cue .tr:not(.revealed) { filter: blur(8px); }
 
-.ctrl { padding: 6px 22px 10px; display: grid; gap: 6px; }
+.ctrl { padding: 6px 22px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; width: 100%; }
+.ctrl > *, .main, .tools, .times { min-width: 0; max-width: 100%; }
+.pbar { width: 100%; }
+.vwrap { width: calc(100% - 36px); }
 #seek { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; --p: 0%; }
 #seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, #fff var(--p), rgba(255,255,255,.25) var(--p)); }
 #seek::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; margin-top: -6.5px; }
@@ -129,7 +132,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 #bPlay .pa { display: none; } #bPlay.playing .pa { display: block; } #bPlay.playing .pl { display: none; }
 #bSpeed { font-size: 17px; border: 2px dashed var(--p-mute); width: 48px; height: 48px; min-width: 48px; min-height: 48px; color: var(--p-ink); }
 .tools { display: flex; justify-content: space-around; padding-top: 6px; }
-.tools button { display: grid; justify-items: center; gap: 3px; min-width: 64px; min-height: 52px; color: var(--p-mute); font-size: 11px; border-radius: 12px; }
+.tools button { display: grid; justify-items: center; gap: 3px; min-width: 0; flex: 1; min-height: 52px; color: var(--p-mute); font-size: 11px; border-radius: 12px; }
 .tools button b { font-size: 20px; line-height: 26px; height: 26px; font-weight: 700; }
 .tools button.on { color: var(--p-amber); }
 
@@ -168,7 +171,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 <body>
 <main id="libraryView">
   <header class="top">
-    <h1>Çift Altyazı</h1>
+    <h1>Çift Altyazı <small style="font-size:11px;font-weight:400;opacity:.55">v5</small></h1>
     <button id="btnSettings" class="icon-btn" aria-label="Ayarlar">
       <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
     </button>
