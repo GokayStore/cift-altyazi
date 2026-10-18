@@ -82,7 +82,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---- oynatıcı ---- */
-.player { position: fixed; inset: 0; background: var(--stage); color: var(--p-ink); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; z-index: 20;
+.player { position: fixed; inset: 0; background: var(--stage); color: var(--p-ink); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; z-index: 20; overflow: hidden;
   padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
 .pbar { display: flex; align-items: center; gap: 10px; padding: 8px 18px 4px; }
@@ -92,8 +92,9 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 .pbar .round { background: transparent; }
 .pbar #pBack { background: var(--p-btn); }
 #pTitle { flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--p-mute); }
-.vwrap { position: relative; background: #000; aspect-ratio: 16 / 9; margin: 4px 18px 0; border-radius: 14px; overflow: hidden; }
-.vwrap video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.vwrap { position: relative; background: #000; aspect-ratio: 16 / 9; margin: 4px 18px 0; border-radius: 14px; overflow: hidden; min-width: 0; }
+.vwrap video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; object-fit: contain; display: block; }
+.pbar, .ctrl, .tlist { min-width: 0; }
 .ovl { display: none; }
 
 .tlist { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 22px 20px 40px; display: grid; gap: 26px; align-content: start; }
