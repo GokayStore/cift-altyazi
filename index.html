@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Çift Altyazı">
+<meta name="theme-color" content="#0c0617">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Çift Altyazı</title>
+<style>
+/* Düzen: dikeyde video + kayan transkript listesi + kontroller; yatayda tam ekran video üstünde koyu altyazı kutusu.
+   Oynatıcı her zaman koyu mor-siyah zeminde; aktif Almanca satır amber, Türkçe satır gri. */
+:root {
+  --bg: #eceef2; --surface: #ffffff; --ink: #15181d; --muted: #5a6370; --line: #d5d9e0;
+  --accent: #b36b00; --accent-ink: #ffffff; --danger: #c0392b;
+  --stage: #0c0617; --p-ink: #ffffff; --p-mute: #9a97a8; --p-amber: #ffc857; --p-btn: rgba(255,255,255,.1);
+  --sub-size: 22px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1013; --surface: #181b21; --ink: #eceff3; --muted: #98a2af; --line: #2a2f37;
+    --accent: #ffc857; --accent-ink: #1b1400; --danger: #ff7a70; color-scheme: dark; }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  -webkit-text-size-adjust: 100%;
+}
+body.playing { padding: 0; background: var(--stage); overflow: hidden; }
+h1, h2, h3, p { margin: 0; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; padding: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid; gap: 20px; }
+.top { display: flex; align-items: center; justify-content: space-between; }
+.top h1 { font-size: 24px; letter-spacing: -0.01em; }
+.icon-btn { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--muted); }
+.icon-btn:active { background: var(--line); }
+.icon-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.hero { display: grid; gap: 10px; }
+.hint { color: var(--muted); font-size: 14px; }
+.btn, .primary, .ghost { min-height: 48px; padding: 0 20px; border-radius: 12px; font-weight: 600; display: inline-grid; place-items: center; }
+.primary { background: var(--accent); color: var(--accent-ink); }
+.primary.big { min-height: 56px; font-size: 18px; width: 100%; }
+.primary.danger { background: var(--danger); color: #fff; }
+.primary:disabled { opacity: .5; }
+.ghost { border: 1px solid var(--line); color: var(--ink); }
+.ghost.danger { color: var(--danger); }
+.btn.primary { cursor: pointer; }
+.list { display: grid; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.card h3 { font-size: 16px; overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.state { font-size: 14px; color: var(--muted); }
+.state.err { color: var(--danger); }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > button { flex: 1 1 110px; }
+.bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+#emptyHint { color: var(--muted); text-align: center; padding: 24px 8px; }
+
+.sheet { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
+.sheet > div { width: 100%; max-width: 560px; background: var(--surface); border-radius: 18px 18px 0 0; padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px));
+  display: grid; gap: 14px; max-height: 92vh; overflow-y: auto; }
+.sheet h2 { font-size: 20px; }
+.fname { overflow-wrap: anywhere; font-weight: 600; }
+.field { display: grid; gap: 6px; }
+.field > span { font-size: 14px; color: var(--muted); }
+.field input, .field select, .field textarea { min-height: 48px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); padding: 10px 12px; width: 100%; }
+.field textarea { resize: vertical; min-height: 96px; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 20px); max-width: min(92vw, 520px);
+  background: #20242b; color: #fff; padding: 12px 16px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none; transition: .25s; z-index: 80; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---- oynatıcı ---- */
+.player { position: fixed; inset: 0; background: var(--stage); color: var(--p-ink); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; z-index: 20;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.pbar { display: flex; align-items: center; gap: 10px; padding: 8px 18px 4px; }
+.round { width: 52px; height: 52px; border-radius: 50%; background: var(--p-btn); display: grid; place-items: center; color: var(--p-ink); flex: none; }
+.round svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+.round svg.dots { fill: currentColor; stroke: none; }
+.pbar .round { background: transparent; }
+.pbar #pBack { background: var(--p-btn); }
+#pTitle { flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--p-mute); }
+.vwrap { position: relative; background: #000; aspect-ratio: 16 / 9; margin: 4px 18px 0; border-radius: 14px; overflow: hidden; }
+.vwrap video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ovl { display: none; }
+
+.tlist { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 22px 20px 40px; display: grid; gap: 26px; align-content: start; }
+.cue { display: grid; gap: 5px; cursor: pointer; min-width: 0; }
+.cmeta { display: none; align-items: center; justify-content: space-between; color: var(--p-mute); font-size: 14px; font-variant-numeric: tabular-nums; min-height: 28px; }
+.cue.active .cmeta { display: flex; }
+.cue .de { font-size: var(--sub-size); line-height: 1.3; font-weight: 500; color: var(--p-ink); overflow-wrap: anywhere; text-wrap: pretty; }
+.cue.active .de { color: var(--p-amber); }
+.cue .tr { font-size: calc(var(--sub-size) * .82); line-height: 1.3; color: var(--p-mute); overflow-wrap: anywhere; min-height: 1em; }
+.heart { width: 44px; height: 44px; margin-right: -10px; display: grid; place-items: center; }
+.heart svg { width: 24px; height: 24px; fill: none; stroke: var(--p-mute); stroke-width: 2; stroke-linejoin: round; }
+.cue.fav .heart svg { fill: #ff6b81; stroke: #ff6b81; }
+.tlist.favonly .cue:not(.fav) { display: none; }
+.player.no-de .cue .de, .player.no-de #ovDe { display: none; }
+.player.no-tr .cue .tr, .player.no-tr #ovTr { display: none; }
+.player.blur .cue .tr:not(.revealed) { filter: blur(8px); }
+
+.ctrl { padding: 6px 22px 10px; display: grid; gap: 6px; }
+#seek { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; --p: 0%; }
+#seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, #fff var(--p), rgba(255,255,255,.25) var(--p)); }
+#seek::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; margin-top: -6.5px; }
+#seek::-moz-range-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,.25); }
+#seek::-moz-range-progress { height: 3px; background: #fff; }
+#seek::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; }
+.times { display: flex; justify-content: space-between; font-size: 13px; color: var(--p-mute); font-variant-numeric: tabular-nums; margin-top: -6px; }
+.main { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+.main button { min-width: 52px; min-height: 52px; display: grid; place-items: center; color: var(--p-ink); border-radius: 50%; font-weight: 600; }
+.main button svg { width: 30px; height: 30px; fill: currentColor; }
+.main button.on { color: var(--p-amber); }
+.main #bPlay { width: 74px; height: 74px; background: #dcdbe3; color: #111; }
+.main #bPlay svg { width: 34px; height: 34px; }
+#bPlay .pa { display: none; } #bPlay.playing .pa { display: block; } #bPlay.playing .pl { display: none; }
+#bSpeed { font-size: 17px; border: 2px dashed var(--p-mute); width: 48px; height: 48px; min-width: 48px; min-height: 48px; color: var(--p-ink); }
+.tools { display: flex; justify-content: space-around; padding-top: 6px; }
+.tools button { display: grid; justify-items: center; gap: 3px; min-width: 64px; min-height: 52px; color: var(--p-mute); font-size: 11px; border-radius: 12px; }
+.tools button b { font-size: 20px; line-height: 26px; height: 26px; font-weight: 700; }
+.tools button.on { color: var(--p-amber); }
+
+.pop { position: absolute; right: 14px; top: calc(66px + env(safe-area-inset-top, 0px)); width: min(330px, calc(100% - 28px)); background: #1a1226; border: 1px solid #36294a; border-radius: 14px; padding: 14px; display: grid; gap: 12px; z-index: 30; }
+.pop .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 15px; }
+.pop .stepper { display: flex; align-items: center; gap: 8px; }
+.pop .stepper button { width: 44px; height: 44px; border-radius: 10px; background: var(--p-btn); color: #fff; font-size: 20px; }
+.pop .stepper span { min-width: 60px; text-align: center; font-variant-numeric: tabular-nums; }
+.pop input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--p-amber); }
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .player { display: block; }
+  .vwrap { position: absolute; inset: 0; margin: 0; border-radius: 0; aspect-ratio: auto; }
+  .tlist { display: none; }
+  .tools { display: none; }
+  .pbar { position: absolute; top: env(safe-area-inset-top, 0px); left: 0; right: 0; z-index: 5; background: linear-gradient(rgba(0,0,0,.6), transparent); transition: opacity .25s; }
+  .pbar #pBack { background: rgba(255,255,255,.18); }
+  .ctrl { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; transition: opacity .25s; background: linear-gradient(transparent, rgba(0,0,0,.65)); padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px)); }
+  .main { padding: 0; }
+  .main button { min-height: 44px; }
+  .main #bPlay { width: 56px; height: 56px; }
+  .player:not(.ui) .ctrl, .player:not(.ui) .pbar { opacity: 0; pointer-events: none; }
+  .ovl { display: block; position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); z-index: 4; max-width: 78%; width: max-content;
+    background: rgba(58, 58, 62, .8); border-radius: 14px; padding: 9px 22px 10px; text-align: center; transition: bottom .25s; }
+  .player.ui .ovl { bottom: 112px; }
+  .ovl.stale { visibility: hidden; }
+  .ovl p { margin: 0; }
+  #ovDe { font-size: var(--sub-size); font-weight: 500; color: #fff; line-height: 1.3; text-wrap: balance; }
+  #ovTr { font-size: calc(var(--sub-size) * .85); color: #f0eff4; line-height: 1.3; margin-top: 3px; text-wrap: balance; }
+  .player.blur .ovl:not(.revealed) #ovTr { filter: blur(8px); }
+  .pop { top: calc(60px + env(safe-area-inset-top, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main id="libraryView">
+  <header class="top">
+    <h1>Çift Altyazı</h1>
+    <button id="btnSettings" class="icon-btn" aria-label="Ayarlar">
+      <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
+  </header>
+  <section class="hero">
+    <button id="btnAdd" class="primary big">Video ekle</button>
+    <p class="hint">İndirdiğin Almanca videoyu seç, altyazısını YouTube linkinden ya da metinden ekle. Türkçe çeviri izlerken gelir ve telefonda kalır.</p>
+  </section>
+  <section id="list" class="list" aria-live="polite"></section>
+  <p id="emptyHint">Henüz video yok. İlk videonu eklediğinde burada görünür.</p>
+  <input id="filePick" type="file" accept="video/*,.mp4,.mov,.m4v" hidden>
+</main>
+
+<section id="playerView" class="player ui" hidden>
+  <header class="pbar">
+    <button id="pBack" class="round" aria-label="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <span id="pTitle"></span>
+    <button id="pMenu" class="round" aria-label="Altyazı ayarları"><svg class="dots" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+  </header>
+  <div id="vwrap" class="vwrap">
+    <video id="vid" playsinline webkit-playsinline preload="auto"></video>
+    <div id="ovl" class="ovl"><p id="ovDe"></p><p id="ovTr"></p></div>
+  </div>
+  <div id="tlist" class="tlist"></div>
+  <div class="ctrl">
+    <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Konum">
+    <div class="times"><span id="tNow">0:00</span><span id="tAll">0:00</span></div>
+    <div class="main">
+      <button id="bSpeed" aria-label="Hız">1×</button>
+      <button id="bPrev" aria-label="Önceki cümle"><svg viewBox="0 0 24 24"><path d="M6 5h2.4v14H6zM20 5v14L9.5 12z"/></svg></button>
+      <button id="bPlay" aria-label="Oynat veya durdur">
+        <svg class="pl" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg class="pa" viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+      </button>
+      <button id="bNext" aria-label="Sonraki cümle"><svg viewBox="0 0 24 24"><path d="M15.6 5H18v14h-2.4zM4 5v14l10.5-7z"/></svg></button>
+      <button id="bLoop" aria-label="Cümleyi tekrarla"><svg viewBox="0 0 24 24"><path d="M7 7h9.5a3.5 3.5 0 0 1 3.5 3.5V12h-2v-1.5a1.5 1.5 0 0 0-1.5-1.5H7v2.2L2.8 8 7 4.8zM17 17H7.5A3.5 3.5 0 0 1 4 13.5V12h2v1.5A1.5 1.5 0 0 0 7.5 15H17v-2.2l4.2 3.2L17 19.2z"/></svg></button>
+    </div>
+    <div class="tools">
+      <button id="bAa" aria-label="Altyazı ayarları"><b>Aa</b><span>Ayarlar</span></button>
+      <button id="bBlur" aria-label="Türkçeyi gizle"><b>T</b><span>Türkçe gizle</span></button>
+      <button id="bFav" aria-label="Sadece kaydedilenler"><b>♥</b><span>Kaydedilenler</span></button>
+      <button id="bAll" aria-label="Hepsini önceden çevir"><b>⇩</b><span>Hepsini çevir</span></button>
+    </div>
+  </div>
+  <div id="pop" class="pop" hidden>
+    <div class="line"><span>Yazı boyutu</span><div class="stepper"><button id="szMinus" aria-label="Küçült">−</button><span id="szVal">22 px</span><button id="szPlus" aria-label="Büyüt">+</button></div></div>
+    <div class="line"><span>Altyazı zamanı</span><div class="stepper"><button id="offMinus" aria-label="Geciktir">−</button><span id="offVal">0 sn</span><button id="offPlus" aria-label="Öne al">+</button></div></div>
+    <label class="line"><span>Almanca göster</span><input id="swDe" type="checkbox"></label>
+    <label class="line"><span>Türkçe göster</span><input id="swTr" type="checkbox"></label>
+    <label class="line"><span>Türkçe'yi dokununca aç</span><input id="swBlur" type="checkbox"></label>
+  </div>
+</section>
+
+<div id="sheet" class="sheet" hidden><div id="sheetBody"></div></div>
+<div id="toast" class="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>
