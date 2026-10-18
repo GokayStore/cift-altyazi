@@ -1,4 +1,4 @@
-const CACHE = 'cift-altyazi-v2';
+const CACHE = 'cift-altyazi-v3';
 const ASSETS = ['./', './index.html', './app.js', './manifest.webmanifest', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

@@ -66,8 +66,8 @@ function splitCue(text, start, end) {
   const tokens = String(text).split(/\s+/).filter(Boolean);
   if (!tokens.length) return [];
   const dur = end - start;
-  if (dur <= 7 && tokens.join(' ').length <= 84) return [{ s: start, e: end, de: tokens.join(' ') }];
-  const ranges = pieceRanges(tokens);
+  if (dur <= 7.5 && tokens.join(' ').length <= 100) return [{ s: start, e: end, de: tokens.join(' ') }];
+  const ranges = pieceRanges(tokens, 100);
   const totalChars = tokens.join(' ').length;
   let acc = 0;
   return ranges.map(([a, b]) => {
@@ -94,13 +94,26 @@ function fixCues(cues) {
   }
   return out;
 }
-function normalizeCues(raw) {
+/* Yarım bölünmüş cümleleri birleştirir ("…gehst du in die" + "Muckibude?"). Çeviri tam cümlede daha iyi olur. */
+function mergeFragments(raw) {
   const out = [];
+  const special = t => /^[\[♪(]/.test(t);
   for (const c of raw) {
     const text = String(c.text || c.de || '').replace(/\s+/g, ' ').trim();
     if (!text || !isFinite(c.s)) continue;
     const e = isFinite(c.e) && c.e > c.s ? c.e : c.s + 3;
-    for (const p of splitCue(text, c.s, e)) out.push(p);
+    const prev = out[out.length - 1];
+    if (prev && !/[.!?…:"»”]$/.test(prev.text) && !special(prev.text) && !special(text)
+      && c.s - prev.e < 1.2 && prev.text.length + 1 + text.length <= 96 && e - prev.s <= 7.5) {
+      prev.text += ' ' + text; prev.e = e;
+    } else out.push({ s: c.s, e, text });
+  }
+  return out;
+}
+function normalizeCues(raw) {
+  const out = [];
+  for (const c of mergeFragments(raw)) {
+    for (const p of splitCue(c.text, c.s, c.e)) out.push(p);
   }
   return fixCues(out);
 }
@@ -139,10 +152,12 @@ function parseSubtitleFile(text) {
 function parsePasted(text) {
   text = String(text).replace(/\r/g, '').trim();
   if (/-->/.test(text)) return parseSubtitleFile(text);
+  // [0:17] biçimindeki zaman damgaları aynı satıra yapışmış olsa bile ayrı satıra ayır
+  text = text.replace(/\s*(\[(?:\d+:)?\d{1,2}:\d{2}\])/g, '\n$1');
   const cues = [];
   let cur = null;
-  const only = /^((?:\d+:)?\d{1,2}:\d{2})$/;
-  const inline = /^((?:\d+:)?\d{1,2}:\d{2})\s+(\S.*)$/;
+  const only = /^[\[(]?((?:\d+:)?\d{1,2}:\d{2})[\])]?$/;
+  const inline = /^[\[(]?((?:\d+:)?\d{1,2}:\d{2})[\])]?[\s\-–—:]*(\S.*)$/;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
@@ -151,6 +166,8 @@ function parsePasted(text) {
     else if ((m = line.match(inline))) { cur = { s: parseTimeStr(m[1]), text: m[2] }; cues.push(cur); }
     else if (cur) cur.text += (cur.text ? ' ' : '') + line;
   }
+  // kopyalama yarıda kesildiyse sondaki "[0:4" gibi artıkları at
+  cues.forEach(c => { c.text = c.text.replace(/\s*[\[(][\d:]*$/, '').trim(); });
   const good = cues.filter(c => c.text && isFinite(c.s));
   good.forEach((c, i) => {
     const next = good[i + 1];
@@ -182,7 +199,7 @@ function findCueIndex(cues, t) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
+  module.exports = { mergeFragments, pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
 }
 
 if (typeof window !== 'undefined') (function () {
