@@ -198,8 +198,46 @@ function findCueIndex(cues, t) {
   return ans;
 }
 
+/* ---------- Kelime defteri: saf yardımcılar ---------- */
+const WORD_RE = /[\p{L}\p{M}]+(?:[’'\-][\p{L}\p{M}]+)*/gu;
+function tokenizeDe(text) {
+  const out = []; let last = 0; text = String(text);
+  text.replace(WORD_RE, (m, off) => {
+    if (off > last) out.push({ t: text.slice(last, off), w: false });
+    out.push({ t: m, w: true }); last = off + m.length; return m;
+  });
+  if (last < text.length) out.push({ t: text.slice(last), w: false });
+  return out;
+}
+function parseWordInfo(text) {
+  const s = String(text || ''), a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  let j; try { j = JSON.parse(s.slice(a, b + 1)); } catch (_) { return null; }
+  if (!j || typeof j !== 'object') return null;
+  const str = k => (typeof j[k] === 'string' ? j[k].trim() : '');
+  const tr = str('tr'); if (!tr) return null;
+  let article = str('article').toLowerCase(); if (!['der', 'die', 'das'].includes(article)) article = '';
+  return { lemma: str('lemma'), pos: str('pos'), article, plural: str('plural'), forms: str('forms'), tr, other: str('other'), note: str('note') };
+}
+const REVIEW_DAYS = [0, 1, 3, 7, 14, 30, 90];
+const DAY_MS = 864e5;
+function nextReview(card, grade, now) {
+  const last = REVIEW_DAYS.length - 1;
+  const step0 = Math.max(0, Math.min(last, card.step || 0));
+  let step, due, lapses = card.lapses || 0;
+  if (grade === 'again') { step = 0; due = now + 10 * 60000; lapses++; }
+  else if (grade === 'hard') { step = step0; due = now + Math.max(1, REVIEW_DAYS[step0]) * DAY_MS; }
+  else { step = Math.min(last, step0 + 1); due = now + REVIEW_DAYS[step] * DAY_MS; }
+  return { step, due, lapses, reps: (card.reps || 0) + 1, last: now };
+}
+function intervalLabel(card, grade, now) {
+  const d = nextReview(card, grade, now).due - now;
+  return d < 36e5 ? Math.round(d / 6e4) + ' dk' : d < 2 * DAY_MS ? '1 gün' : Math.round(d / DAY_MS) + ' gün';
+}
+function isDue(w, now) { return (w.due || 0) <= now; }
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { mergeFragments, pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
+  module.exports = { tokenizeDe, parseWordInfo, nextReview, intervalLabel, isDue, mergeFragments, pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
 }
 
 if (typeof window !== 'undefined') (function () {
@@ -256,8 +294,13 @@ if (typeof window !== 'undefined') (function () {
     function open() {
       if (dbp) return dbp;
       dbp = new Promise((res, rej) => {
-        const r = indexedDB.open('cift-altyazi', 1);
-        r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('videos', { keyPath: 'id' }); d.createObjectStore('files'); };
+        const r = indexedDB.open('cift-altyazi', 2);
+        r.onupgradeneeded = () => {
+          const d = r.result;
+          if (!d.objectStoreNames.contains('videos')) d.createObjectStore('videos', { keyPath: 'id' });
+          if (!d.objectStoreNames.contains('files')) d.createObjectStore('files');
+          if (!d.objectStoreNames.contains('words')) d.createObjectStore('words', { keyPath: 'id' });
+        };
         r.onsuccess = () => res(r.result);
         r.onerror = () => rej(r.error);
       });
@@ -279,6 +322,9 @@ if (typeof window !== 'undefined') (function () {
       put: v => tx('videos', 'readwrite', s => s.put(v)),
       putFile: (id, f) => tx('files', 'readwrite', s => s.put(f, id)),
       getFile: id => tx('files', 'readonly', s => s.get(id)),
+      allWords: () => tx('words', 'readonly', s => s.getAll()),
+      putWord: w => tx('words', 'readwrite', s => s.put(w)),
+      delWord: id => tx('words', 'readwrite', s => s.delete(id)),
       del: async id => { await tx('videos', 'readwrite', s => s.delete(id)); await tx('files', 'readwrite', s => s.delete(id)); }
     };
   })();
@@ -544,12 +590,13 @@ if (typeof window !== 'undefined') (function () {
   const P = { rec: null, url: '', idx: -1, loop: -1, raf: 0, offset: 0, wake: null, hideT: 0, userScrollUntil: 0, favOnly: false };
   const vid = () => $('vid');
 
+  const deHtml = text => tokenizeDe(text).map(p => p.w ? '<span class="w">' + esc(p.t) + '</span>' : esc(p.t)).join('');
   function buildList() {
     const rec = P.rec;
     $('tlist').innerHTML = rec.cues.map((c, i) => `
       <div class="cue${rec.fav && rec.fav[i] ? ' fav' : ''}" data-i="${i}">
         <div class="cmeta"><span class="ts">${fmtHMS(c.s)}</span><button class="heart" data-heart="${i}" aria-label="Cümleyi kaydet"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-9.3-9.2C1.5 8 3.6 5 6.7 5c2 0 3.4 1 5.3 3 1.9-2 3.3-3 5.3-3 3.1 0 5.2 3 4 6.3-1.8 4.6-9.3 9.2-9.3 9.2z"/></svg></button></div>
-        <p class="de">${esc(c.de)}</p><p class="tr">${esc(c.tr || '')}</p>
+        <p class="de">${deHtml(c.de)}</p><p class="tr">${esc(c.tr || '')}</p>
       </div>`).join('');
   }
   function trText(i) { const c = P.rec.cues[i]; return c.tr || (TR.pending.has(i) ? '…' : ''); }
@@ -560,12 +607,13 @@ if (typeof window !== 'undefined') (function () {
     if (i === P.idx) $('ovTr').textContent = trText(i);
   }
 
-  async function openPlayer(id) {
+  async function openPlayer(id, opts) {
+    opts = opts || {};
     const rec = await DB.get(id);
     if (!rec) return;
     const blob = await getBlob(rec);
     if (!blob) return;
-    P.rec = rec; P.idx = -1; P.loop = -1; P.offset = rec.offset || 0; P.favOnly = false;
+    P.rec = rec; P.idx = -1; P.loop = -1; P.offset = rec.offset || 0; P.favOnly = false; P.from = opts.from || 'library';
     rec.fav = rec.fav || {};
     TR.pending.clear(); TR.cool = 0;
     if (P.url) URL.revokeObjectURL(P.url);
@@ -574,11 +622,12 @@ if (typeof window !== 'undefined') (function () {
     const v = vid();
     v.src = P.url; v.playbackRate = 1; $('bSpeed').textContent = '1×';
     $('pTitle').textContent = rec.name;
-    $('playerView').hidden = false; $('libraryView').hidden = true;
+    $('playerView').hidden = false; $('libraryView').hidden = true; $('wordsView').hidden = true;
     document.body.classList.add('playing');
     $('bLoop').classList.remove('on'); $('tlist').classList.remove('favonly'); $('bFav').classList.remove('on');
     applyView(); showUI(); renderSubs(true); tick();
-    if (rec.pos) v.addEventListener('loadedmetadata', () => { v.currentTime = rec.pos; }, { once: true });
+    const at = typeof opts.cueStart === 'number' ? opts.cueStart + P.offset : rec.pos;
+    if (at) v.addEventListener('loadedmetadata', () => { v.currentTime = at; }, { once: true });
   }
 
   async function closePlayer() {
@@ -587,11 +636,13 @@ if (typeof window !== 'undefined') (function () {
     v.pause(); cancelAnimationFrame(P.raf); releaseWake();
     v.removeAttribute('src'); v.load();
     if (P.url) { URL.revokeObjectURL(P.url); P.url = ''; }
-    $('playerView').hidden = true; $('libraryView').hidden = false;
+    $('playerView').hidden = true;
+    const back = P.from === 'words' ? 'words' : 'library';
     document.body.classList.remove('playing');
     $('pop').hidden = true;
     P.rec = null;
-    refresh();
+    await refresh();
+    showView(back);
   }
 
   function applyView() {
@@ -625,7 +676,7 @@ if (typeof window !== 'undefined') (function () {
       const el = list.children[i];
       if (el) { el.classList.add('active'); scrollToActive(); }
       const c = cues[i];
-      $('ovDe').textContent = c ? c.de : '';
+      $('ovDe').innerHTML = c ? deHtml(c.de) : ''; $('ovDe').dataset.i = i;
       $('ovTr').textContent = c ? trText(i) : '';
       $('ovl').classList.remove('revealed');
       ensureTranslated();
@@ -709,11 +760,17 @@ if (typeof window !== 'undefined') (function () {
     $('swDe').onchange = e => { settings.showDe = e.target.checked; saveSettings(); applyView(); };
     $('swTr').onchange = e => { settings.showTr = e.target.checked; saveSettings(); applyView(); };
     $('swBlur').onchange = e => { settings.blurTr = e.target.checked; saveSettings(); applyView(); };
+    $('ovDe').addEventListener('click', e => {
+      const wEl = e.target.closest('.w');
+      if (wEl) { e.stopPropagation(); openWord(wEl.textContent, Number($('ovDe').dataset.i)); }
+    });
     $('ovTr').addEventListener('click', () => { if (settings.blurTr) $('ovl').classList.toggle('revealed'); });
 
     const list = $('tlist');
     ['touchstart', 'wheel', 'pointerdown'].forEach(ev => list.addEventListener(ev, () => { P.userScrollUntil = Date.now() + 4500; }, { passive: true }));
     list.addEventListener('click', e => {
+      const wEl = e.target.closest('.w');
+      if (wEl) { const cueEl = wEl.closest('.cue'); if (cueEl) openWord(wEl.textContent, Number(cueEl.dataset.i)); return; }
       const heart = e.target.closest('[data-heart]');
       if (heart) {
         const i = Number(heart.dataset.heart), rec = P.rec;
@@ -733,6 +790,259 @@ if (typeof window !== 'undefined') (function () {
       }
     });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && !vid().paused) takeWake(); });
+  }
+
+  /* ---------- Bölüm 5: kelime defteri, kelime anlamı, tekrar kartları ---------- */
+  let words = [];
+  const lookups = new Map();
+  const wordId = s => String(s).trim().toLowerCase();
+  async function loadWords() { try { words = await DB.allWords(); } catch (_) { words = []; } updateDue(); }
+  function updateDue() {
+    const n = words.filter(w => isDue(w, Date.now())).length, b = $('dueBadge');
+    if (b) { b.textContent = n; b.hidden = !n; }
+  }
+  function speak(text) {
+    try {
+      const u = new SpeechSynthesisUtterance(text); u.lang = 'de-DE'; u.rate = 0.85;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    } catch (_) { toast('Bu cihaz sesli okumayı desteklemiyor.'); }
+  }
+  const artHtml = a => a ? `<span class="art art-${a}">${a}</span>` : '';
+  function hlHtml(text, surfaces) {
+    const set = new Set((surfaces || []).map(x => x.toLowerCase()));
+    return tokenizeDe(text).map(p => p.w && set.has(p.t.toLowerCase()) ? '<mark>' + esc(p.t) + '</mark>' : esc(p.t)).join('');
+  }
+
+  const WORD_SYSTEM = 'You are a German-Turkish dictionary for a Turkish learner of German. Reply with exactly one JSON object and nothing else.';
+  async function claudeWord(word, cue, key, model, signal) {
+    const user = 'Sentence: "' + cue.de + '"\n' + (cue.tr ? 'Its Turkish translation: "' + cue.tr + '"\n' : '') + 'Tapped word: "' + word + '"\n\n' +
+      'Return one JSON object with these keys (use "" when not applicable):\n' +
+      '"lemma": dictionary form (nouns capitalised, singular; verbs in infinitive; if the tapped word belongs to a separable verb, give the full verb),\n' +
+      '"pos": part of speech in Turkish (isim, fiil, sıfat, zarf, edat, bağlaç, zamir, ünlem, ...),\n' +
+      '"article": der, die or das for nouns only,\n' +
+      '"plural": plural form for nouns only,\n' +
+      '"forms": for verbs: "er/sie/es Präsens · Präteritum · Partizip II" (e.g. "hilft · half · geholfen"),\n' +
+      '"tr": Turkish meaning of the word AS USED in this sentence, 1 to 4 words,\n' +
+      '"other": other common Turkish meanings, very short,\n' +
+      '"note": one short useful tip in Turkish (separable verb, case it takes, idiom, false friend), at most one sentence.';
+    const r = await fetchRetry('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model, max_tokens: 500, system: WORD_SYSTEM, messages: [{ role: 'user', content: user }] })
+    }, signal);
+    const j = await r.json();
+    const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    return { info: parseWordInfo(text), usage: { i: (j.usage && j.usage.input_tokens) || 0, o: (j.usage && j.usage.output_tokens) || 0 } };
+  }
+
+  async function openWord(word, idx) {
+    const rec = P.rec; if (!rec) return;
+    const cue = rec.cues[idx]; if (!cue) return;
+    if (!settings.anthropic) {
+      const v0 = vid(); v0.pause();
+      openSettings('Kelime anlamı için Claude API anahtarı gerekli.'); return;
+    }
+    const v = vid(), wasPlaying = !v.paused; v.pause();
+    const lc = word.toLowerCase(), ckey = rec.id + '|' + idx + '|' + lc;
+    const ctl = new AbortController();
+    sheetClose = () => { ctl.abort(); if (wasPlaying && P.rec) v.play(); };
+    let info = lookups.get(ckey) || null, note = '';
+    const savedHere = words.find(w => w.src && w.src.vid === rec.id && w.src.cue === idx && (w.surface || []).includes(lc));
+    if (!info && savedHere) info = { lemma: savedHere.de, pos: savedHere.pos, article: savedHere.article, plural: savedHere.plural, forms: savedHere.forms, tr: savedHere.tr, other: savedHere.other, note: savedHere.note };
+
+    const paint = () => {
+      const id = wordId(info.lemma || word);
+      const isSaved = words.some(w => w.id === id);
+      const meta = [info.pos, info.plural ? 'çoğul: ' + info.plural : ''].filter(Boolean).map(esc).join(' · ');
+      openSheet(`
+        <h2 class="wword">${artHtml(info.article)}${esc(info.lemma || word)}</h2>
+        ${meta ? `<p class="meta">${meta}</p>` : ''}
+        <p class="wmean">${esc(info.tr)}</p>
+        ${info.forms ? `<p class="hint">${esc(info.forms)}</p>` : ''}
+        ${info.other ? `<p class="hint">Diğer anlamlar: ${esc(info.other)}</p>` : ''}
+        ${info.note ? `<p class="state">💡 ${esc(info.note)}</p>` : ''}
+        ${note ? `<p class="state">${esc(note)}</p>` : ''}
+        <p class="wctx">${hlHtml(cue.de, [lc])}</p>
+        <div class="row"><button id="wSave" class="${isSaved ? 'ghost' : 'primary'}">${isSaved ? 'Defterden çıkar' : 'Deftere kaydet'}</button>
+        <button id="wSpeak" class="ghost" aria-label="Sesli oku">🔊</button><button id="wClose" class="ghost">Kapat</button></div>`, b => {
+        b.querySelector('#wClose').onclick = closeSheet;
+        b.querySelector('#wSpeak').onclick = () => speak(info.lemma || word);
+        b.querySelector('#wSave').onclick = async () => {
+          try {
+            if (isSaved) {
+              await DB.delWord(id); words = words.filter(w => w.id !== id); toast('Defterden çıkarıldı.');
+            } else {
+              const now = Date.now();
+              const w = { id, de: info.lemma || word, article: info.article, pos: info.pos, plural: info.plural, forms: info.forms, tr: info.tr, other: info.other, note: info.note,
+                surface: [lc], ex: cue.de, exTr: cue.tr || '', src: { vid: rec.id, cue: idx, t: cue.s, name: rec.name }, createdAt: now, due: now, step: 0, reps: 0, lapses: 0 };
+              await DB.putWord(w); words.push(w); toast('Deftere kaydedildi.');
+            }
+            updateDue(); paint();
+          } catch (e) { toast('Kaydedilemedi: ' + e.message); }
+        };
+      });
+    };
+
+    if (info) { paint(); return; }
+    openSheet(`<h2 class="wword">${esc(word)}</h2><p class="state">Anlamı bulunuyor…</p><div class="row"><button id="wClose" class="ghost">Kapat</button></div>`, b => { b.querySelector('#wClose').onclick = closeSheet; });
+    try {
+      const res = await claudeWord(word, cue, settings.anthropic, settings.model, ctl.signal);
+      rec.usage = rec.usage || { i: 0, o: 0 }; rec.usage.i += res.usage.i; rec.usage.o += res.usage.o;
+      DB.put(rec).catch(() => {});
+      if (!res.info) throw new Error('Cevap okunamadı. Tekrar dene.');
+      info = res.info; lookups.set(ckey, info); paint();
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      const old = words.find(w => (w.surface || []).includes(lc) || wordId(w.de) === lc);
+      if (old) {
+        info = { lemma: old.de, pos: old.pos, article: old.article, plural: old.plural, forms: old.forms, tr: old.tr, other: old.other, note: old.note };
+        note = 'İnternet yok. Defterdeki kayıtlı anlam gösteriliyor, bu cümledeki anlamı farklı olabilir.'; paint();
+      } else {
+        openSheet(`<h2 class="wword">${esc(word)}</h2><p class="state err">${esc(explain(e))}</p><div class="row"><button id="wClose" class="ghost">Kapat</button></div>`, b => { b.querySelector('#wClose').onclick = closeSheet; });
+      }
+    }
+  }
+
+  /* --- defter ekranı --- */
+  let wTab = 'w', openWordId = '';
+  function showView(name) {
+    $('libraryView').hidden = name !== 'library';
+    $('wordsView').hidden = name !== 'words';
+    if (name === 'words') renderWords();
+    if (name === 'library') updateDue();
+  }
+  function dueText(w) {
+    const d = (w.due || 0) - Date.now();
+    if (d <= 0) return 'tekrar zamanı';
+    if (d < 36e5) return Math.ceil(d / 6e4) + ' dk sonra';
+    if (d < 864e5) return Math.ceil(d / 36e5) + ' saat sonra';
+    return Math.ceil(d / 864e5) + ' gün sonra';
+  }
+  function collectFavs() {
+    const out = [];
+    videos.forEach(rec => Object.keys(rec.fav || {}).forEach(k => {
+      const c = rec.cues && rec.cues[k]; if (c) out.push({ vid: rec.id, name: rec.name, i: Number(k), c });
+    }));
+    return out.sort((a, b) => a.name.localeCompare(b.name) || a.c.s - b.c.s);
+  }
+  function renderWords() {
+    const favs = collectFavs(), q = $('wSearch').value.trim().toLowerCase();
+    $('tabW').classList.toggle('on', wTab === 'w'); $('tabS').classList.toggle('on', wTab === 's');
+    $('cntW').textContent = words.length; $('cntS').textContent = favs.length;
+    const due = words.filter(w => isDue(w, Date.now())).length;
+    $('btnReview').hidden = wTab !== 'w' || !words.length;
+    $('btnReview').textContent = due ? 'Tekrar et (' + due + ')' : 'Şu an tekrar yok';
+    $('btnReview').disabled = !due;
+    let html = '', empty = '';
+    if (wTab === 'w') {
+      const list = words.filter(w => !q || (w.de + ' ' + w.tr + ' ' + (w.surface || []).join(' ')).toLowerCase().includes(q)).sort((a, b) => b.createdAt - a.createdAt);
+      html = list.map(w => {
+        const open = w.id === openWordId;
+        const meta = [w.pos, w.plural ? 'çoğul: ' + w.plural : '', dueText(w)].filter(Boolean).map(esc).join(' · ');
+        return `<article class="card wcard" data-id="${esc(w.id)}">
+          <div class="wh"><b class="wde">${artHtml(w.article)}${esc(w.de)}</b><span class="wtr">${esc(w.tr)}</span></div>
+          <p class="meta">${meta}</p>
+          ${open ? `<p class="wctx">${hlHtml(w.ex, w.surface)}</p>${w.exTr ? `<p class="state">${esc(w.exTr)}</p>` : ''}
+            ${w.forms ? `<p class="hint">${esc(w.forms)}</p>` : ''}${w.other ? `<p class="hint">Diğer anlamlar: ${esc(w.other)}</p>` : ''}${w.note ? `<p class="state">💡 ${esc(w.note)}</p>` : ''}
+            <div class="row"><button data-wa="show" class="ghost">Videoda göster</button><button data-wa="speak" class="ghost" aria-label="Sesli oku">🔊</button><button data-wa="del" class="ghost danger">Sil</button></div>` : ''}
+        </article>`;
+      }).join('');
+      empty = words.length ? (list.length ? '' : 'Eşleşen kelime yok.') : 'Henüz kelime yok. Videoyu izlerken Almanca bir kelimeye dokun, anlamı çıkınca "Deftere kaydet"e bas.';
+    } else {
+      const list = favs.filter(f => !q || (f.c.de + ' ' + (f.c.tr || '')).toLowerCase().includes(q));
+      html = list.map(f => `<article class="card" data-vid="${esc(f.vid)}" data-i="${f.i}">
+          <p class="wde">${esc(f.c.de)}</p><p class="wtr" style="text-align:left">${esc(f.c.tr || '')}</p>
+          <p class="meta">${esc(f.name)} · ${fmtHMS(f.c.s)}</p>
+          <div class="row"><button data-sa="show" class="ghost">Videoda göster</button><button data-sa="del" class="ghost danger">Çıkar</button></div>
+        </article>`).join('');
+      empty = favs.length ? (list.length ? '' : 'Eşleşen cümle yok.') : 'Henüz cümle yok. Videoda cümlenin yanındaki kalbe dokunursan burada toplanır.';
+    }
+    $('wList').innerHTML = html;
+    $('wEmpty').textContent = empty; $('wEmpty').hidden = !empty;
+  }
+  function showInVideo(vidId, t) {
+    if (!videos.some(v => v.id === vidId)) { toast('Bu video silinmiş.'); return; }
+    openPlayer(vidId, { from: 'words', cueStart: t });
+  }
+
+  /* --- tekrar kartları --- */
+  const R = { q: [], n: 0, done: 0, shown: false };
+  function startReview() {
+    const now = Date.now();
+    R.q = words.filter(w => isDue(w, now)).sort((a, b) => (a.due || 0) - (b.due || 0)).slice(0, 30);
+    R.n = R.q.length; R.done = 0; R.shown = false;
+    if (!R.q.length) { toast('Şu an tekrar edilecek kelime yok.'); return; }
+    $('reviewView').hidden = false; paintReview();
+  }
+  function paintReview() {
+    const body = $('rBody'), act = $('rActions');
+    $('rCount').textContent = R.done + ' / ' + R.n;
+    const card = R.q[0];
+    if (!card) {
+      body.innerHTML = `<p class="rword">Tamam 🎉</p><p class="rctx">${R.n} kelime tekrar edildi.</p>`;
+      act.innerHTML = '<button id="rEnd" class="primary show">Bitir</button>';
+      $('rEnd').onclick = closeReview; $('rSpeak').hidden = true; return;
+    }
+    $('rSpeak').hidden = false;
+    const ctx = `<p class="rctx">${hlHtml(card.ex, card.surface)}</p>`;
+    if (!R.shown) {
+      body.innerHTML = `<p class="rword">${esc(card.de)}</p>${ctx}<p class="hint">Anlamını ve artikelini düşün.</p>`;
+      act.innerHTML = '<button id="rShow" class="primary show">Göster</button>';
+      $('rShow').onclick = () => { R.shown = true; paintReview(); };
+    } else {
+      const meta = [card.pos, card.plural ? 'çoğul: ' + card.plural : ''].filter(Boolean).map(esc).join(' · ');
+      body.innerHTML = `<p class="rword">${artHtml(card.article)}${esc(card.de)}</p>
+        <p class="wmean">${esc(card.tr)}</p>${meta ? `<p class="meta">${meta}</p>` : ''}${card.forms ? `<p class="hint">${esc(card.forms)}</p>` : ''}
+        ${ctx}${card.exTr ? `<p class="hint">${esc(card.exTr)}</p>` : ''}${card.note ? `<p class="state">💡 ${esc(card.note)}</p>` : ''}`;
+      const now = Date.now();
+      act.innerHTML = [['again', 'Bilmedim'], ['hard', 'Zordu'], ['good', 'Biliyordum']]
+        .map(([g, label]) => `<button data-g="${g}">${label}<small>${intervalLabel(card, g, now)}</small></button>`).join('');
+      act.querySelectorAll('[data-g]').forEach(b => { b.onclick = () => rate(b.dataset.g); });
+    }
+    body.scrollTop = 0;
+  }
+  function rate(grade) {
+    const card = R.q.shift(); if (!card) return;
+    Object.assign(card, nextReview(card, grade, Date.now()));
+    DB.putWord(card).catch(() => toast('Kaydedilemedi.'));
+    if (grade === 'again') R.q.push(card); else R.done++;
+    R.shown = false; updateDue(); paintReview();
+  }
+  function closeReview() { $('reviewView').hidden = true; try { speechSynthesis.cancel(); } catch (_) { /* boş */ } renderWords(); updateDue(); }
+
+  function bindWords() {
+    $('btnWords').onclick = () => showView('words');
+    $('wBack').onclick = () => showView('library');
+    $('tabW').onclick = () => { wTab = 'w'; renderWords(); };
+    $('tabS').onclick = () => { wTab = 's'; renderWords(); };
+    $('wSearch').addEventListener('input', renderWords);
+    $('btnReview').onclick = startReview;
+    $('rClose').onclick = closeReview;
+    $('rSpeak').onclick = () => { if (R.q[0]) speak(R.q[0].de); };
+    $('wList').addEventListener('click', async e => {
+      const art = e.target.closest('article'); if (!art) return;
+      const wa = e.target.closest('[data-wa]'), sa = e.target.closest('[data-sa]');
+      if (sa) {
+        const id = art.dataset.vid, i = Number(art.dataset.i), rec = videos.find(v => v.id === id); if (!rec) return;
+        if (sa.dataset.sa === 'show') showInVideo(id, rec.cues[i].s);
+        else { try { delete rec.fav[i]; await DB.put(rec); } catch (err) { toast('Kaydedilemedi: ' + err.message); } renderWords(); }
+        return;
+      }
+      const w = words.find(x => x.id === art.dataset.id); if (!w) return;
+      if (wa) {
+        if (wa.dataset.wa === 'show') showInVideo(w.src.vid, w.src.t);
+        else if (wa.dataset.wa === 'speak') speak(w.de);
+        else if (wa.dataset.wa === 'del') {
+          openSheet(`<h2>Silinsin mi?</h2><p>"${esc(w.de)}" defterden silinir.</p>
+            <div class="row"><button id="dYes" class="primary danger">Sil</button><button id="dNo" class="ghost">Vazgeç</button></div>`, bb => {
+            bb.querySelector('#dNo').onclick = closeSheet;
+            bb.querySelector('#dYes').onclick = async () => { closeSheet(); await DB.delWord(w.id).catch(() => {}); words = words.filter(x => x.id !== w.id); openWordId = ''; renderWords(); updateDue(); };
+          });
+        }
+        return;
+      }
+      openWordId = openWordId === w.id ? '' : w.id; renderWords();
+    });
   }
 
   function init() {
@@ -757,8 +1067,10 @@ if (typeof window !== 'undefined') (function () {
       }
     });
     bindPlayer();
+    bindWords();
     applyView();
     refresh();
+    loadWords();
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* boş */ }
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   }
