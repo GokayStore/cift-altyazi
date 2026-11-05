@@ -196,6 +196,19 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
   #ovTr { font-size: clamp(15px, 1.75vw, 25px); color: #f0eff4; line-height: 1.3; margin-top: 3px; text-wrap: balance; }
   .player.blur .ovl:not(.revealed) #ovTr { filter: blur(8px); }
 }
+/* ---- küçük ekran penceresi ---- */
+.player.pipbox { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: block; padding: 0; z-index: 1; background: #000; width: auto; }
+.pipbox .vwrap { position: absolute; inset: 0; margin: 0; width: auto; aspect-ratio: auto; border-radius: 0; }
+.pipbox .ovl { display: block; position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); z-index: 4; max-width: 94%; width: max-content;
+  background: rgba(40,40,46,.8); border-radius: 10px; padding: 6px 14px 7px; text-align: center; pointer-events: none; }
+.pipbox .ovl.stale { visibility: hidden; }
+.pipbox .ovl p { margin: 0; }
+.pipbox #ovDe { font-size: clamp(13px, 3.6vw, 28px); font-weight: 500; color: #fff; line-height: 1.3; text-wrap: balance; }
+.pipbox #ovTr { font-size: clamp(11px, 3vw, 23px); color: #f0eff4; line-height: 1.3; margin-top: 2px; text-wrap: balance; }
+.pipbox.blur .ovl:not(.revealed) #ovTr { filter: blur(8px); }
+.pipctl { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; opacity: 0; transition: opacity .2s; z-index: 6; }
+.pipbox:hover .pipctl { opacity: 1; }
+.pipctl button { width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 16px; border: 0; cursor: pointer; }
 @media (orientation: landscape) and (max-height: 520px) {
   .player { display: block; }
   .vwrap { position: absolute; inset: 0; margin: 0; width: auto; border-radius: 0; aspect-ratio: auto; }
@@ -224,7 +237,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 <body>
 <main id="libraryView">
   <header class="top">
-    <h1>Çift Altyazı <small style="font-size:11px;font-weight:400;opacity:.55">v9</small></h1>
+    <h1>Çift Altyazı <small style="font-size:11px;font-weight:400;opacity:.55">v10</small></h1>
     <div class="topbtns">
       <button id="btnWords" class="pill">Defter <b id="dueBadge" hidden>0</b></button>
       <button id="btnSettings" class="icon-btn" aria-label="Ayarlar">
@@ -266,6 +279,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
   <header class="pbar">
     <button id="pBack" class="round" aria-label="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     <span id="pTitle"></span>
+    <button id="pPip" class="round" aria-label="Küçük ekran" title="Küçük ekran (diğer pencerelerin üstünde)" hidden><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none"/></svg></button>
     <button id="pMenu" class="round" aria-label="Altyazı ayarları"><svg class="dots" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
   </header>
   <div id="vwrap" class="vwrap">

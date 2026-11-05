@@ -350,7 +350,7 @@ if (typeof window !== 'undefined') (function () {
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch (_) { /* boş */ }
   function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch (_) { /* özel mod */ } }
 
-  const $ = id => document.getElementById(id);
+  const $ = id => document.getElementById(id) || (P.pip && P.pip.document.getElementById(id)) || null;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let videos = [];
   const jobs = new Map(); // id -> { ctl, text, frac }  (hepsini önceden çevir)
@@ -672,7 +672,7 @@ if (typeof window !== 'undefined') (function () {
   }
 
   /* --- oynatıcı --- */
-  const P = { rec: null, url: '', idx: -1, loop: -1, raf: 0, offset: 0, wake: null, hideT: 0, userScrollUntil: 0, favOnly: false };
+  const P = { pip: null, moving: false, playIntent: false, rec: null, url: '', idx: -1, loop: -1, raf: 0, offset: 0, wake: null, hideT: 0, userScrollUntil: 0, favOnly: false };
   const vid = () => $('vid');
 
   const deHtml = text => tokenizeDe(text).map(p => p.w ? '<span class="w">' + esc(p.t) + '</span>' : esc(p.t)).join('');
@@ -716,6 +716,7 @@ if (typeof window !== 'undefined') (function () {
   }
 
   async function closePlayer() {
+    if (P.pip) { const w = P.pip; restorePip(); try { w.close(); } catch (_) { /* kapalı */ } }
     const v = vid();
     if (P.rec) { P.rec.pos = v.currentTime; P.rec.offset = P.offset; DB.put(P.rec).catch(() => {}); }
     v.pause(); cancelAnimationFrame(P.raf); releaseWake();
@@ -738,6 +739,7 @@ if (typeof window !== 'undefined') (function () {
     $('bBlur').classList.toggle('on', settings.blurTr);
     $('offVal').textContent = (P.offset >= 0 ? '+' : '') + P.offset.toFixed(1) + ' sn';
     $('szVal').textContent = settings.fontSize + ' px';
+    if (P.pip) { const bx = P.pip.document.querySelector('.pipbox'); if (bx) ['no-de', 'no-tr', 'blur'].forEach(c => bx.classList.toggle(c, $('playerView').classList.contains(c))); }
     $('swDe').checked = settings.showDe; $('swTr').checked = settings.showTr; $('swBlur').checked = settings.blurTr;
   }
 
@@ -805,10 +807,65 @@ if (typeof window !== 'undefined') (function () {
     renderSubs(true);
   }
 
+  /* --- küçük ekran (Document Picture-in-Picture: Chrome, Edge) --- */
+  function restorePip() {
+    const pip = P.pip; if (!pip) return;
+    const wrap = pip.document.getElementById('vwrap');
+    P.pip = null;
+    if (wrap) {
+      const v = wrap.querySelector('video'), ctl = wrap.parentNode && wrap.parentNode.querySelector('.pipctl');
+      P.moving = true; setTimeout(() => { P.moving = false; }, 400);
+      document.getElementById('playerView').insertBefore(wrap, document.getElementById('tlist'));
+      if (ctl) ctl.remove();
+      if (v && P.playIntent) v.play().catch(() => {});
+    }
+    document.getElementById('playerView').classList.remove('pipping');
+    if (P.rec) { renderSubs(true); tick(); }
+  }
+  async function togglePip() {
+    if (!P.rec) return;
+    if (P.pip) { P.pip.close(); return; }
+    if (!('documentPictureInPicture' in window)) { toast('Bu tarayıcı küçük ekranı desteklemiyor. Chrome ya da Edge kullan.'); return; }
+    let pip;
+    try { pip = await window.documentPictureInPicture.requestWindow({ width: 520, height: 310 }); }
+    catch (e) { toast('Küçük ekran açılamadı: ' + e.message); return; }
+    const wrap = $('vwrap'), v = vid();
+    [...document.styleSheets].forEach(ss => {
+      try { const st = pip.document.createElement('style'); st.textContent = [...ss.cssRules].map(r => r.cssText).join('\n'); pip.document.head.appendChild(st); } catch (_) { /* dış stil */ }
+    });
+    pip.document.body.style.margin = '0';
+    const box = pip.document.createElement('div'); box.className = 'player pipbox';
+    P.moving = true; setTimeout(() => { P.moving = false; }, 400);
+    P.pip = pip;
+    box.appendChild(wrap);
+    const ctl = pip.document.createElement('div'); ctl.className = 'pipctl';
+    [['bPrev', '⏮', 'Önceki cümle'], ['bPlay', '⏯', 'Oynat veya durdur'], ['bNext', '⏭', 'Sonraki cümle'], ['back', '⤢', 'Ana pencereye dön']].forEach(([id, ch, label]) => {
+      const b = pip.document.createElement('button'); b.textContent = ch; b.setAttribute('aria-label', label);
+      b.onclick = e => { e.stopPropagation(); if (id === 'back') pip.close(); else document.getElementById(id).click(); };
+      ctl.appendChild(b);
+    });
+    box.appendChild(ctl);
+    pip.document.body.appendChild(box);
+    box.addEventListener('click', e => { if (e.target.closest('.pipctl')) return; v.paused ? v.play() : v.pause(); });
+    pip.document.addEventListener('keydown', e => {
+      if (e.key === ' ') { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); seekCue(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); seekCue(1); }
+    });
+    pip.addEventListener('pagehide', restorePip);
+    document.getElementById('playerView').classList.add('pipping');
+    applyView();
+    if (P.playIntent) v.play().catch(() => {});
+    const loop = () => { if (P.pip !== pip) return; renderSubs(false); pip.requestAnimationFrame(loop); };
+    pip.requestAnimationFrame(loop);
+    renderSubs(true);
+  }
+
   function bindPlayer() {
     const v = vid();
-    v.addEventListener('play', () => { $('bPlay').classList.add('playing'); takeWake(); tick(); showUI(); });
-    v.addEventListener('pause', () => { $('bPlay').classList.remove('playing'); releaseWake(); showUI(); tick(); if (P.rec) { P.rec.pos = v.currentTime; DB.put(P.rec).catch(() => {}); } });
+    v.addEventListener('play', () => { P.playIntent = true; $('bPlay').classList.add('playing'); takeWake(); tick(); showUI(); });
+    v.addEventListener('pause', () => { if (!P.moving) P.playIntent = false; $('bPlay').classList.remove('playing'); releaseWake(); showUI(); tick(); if (P.rec) { P.rec.pos = v.currentTime; DB.put(P.rec).catch(() => {}); } });
+    v.addEventListener('timeupdate', () => { if (P.pip) renderSubs(false); });
     v.addEventListener('seeked', () => { renderSubs(true); tick(); });
     v.addEventListener('ended', () => { $('bPlay').classList.remove('playing'); });
     v.addEventListener('error', () => toast('Video oynatılamadı. Safari bu biçimi açamıyor olabilir.'));
@@ -833,6 +890,7 @@ if (typeof window !== 'undefined') (function () {
     };
     $('seek').addEventListener('input', e => { if (v.duration) { v.currentTime = (e.target.value / 1000) * v.duration; P.userScrollUntil = 0; showUI(); } });
     $('pBack').onclick = closePlayer;
+    if ('documentPictureInPicture' in window) { $('pPip').hidden = false; $('pPip').onclick = togglePip; }
     const togglePop = () => { $('pop').hidden = !$('pop').hidden; showUI(); };
     $('pMenu').onclick = togglePop; $('bAa').onclick = togglePop;
     $('bBlur').onclick = () => { settings.blurTr = !settings.blurTr; saveSettings(); applyView(); };
@@ -847,7 +905,7 @@ if (typeof window !== 'undefined') (function () {
     $('swBlur').onchange = e => { settings.blurTr = e.target.checked; saveSettings(); applyView(); };
     $('ovDe').addEventListener('click', e => {
       const wEl = e.target.closest('.w');
-      if (wEl) { e.stopPropagation(); openWord(wEl.textContent, Number($('ovDe').dataset.i)); }
+      if (wEl && !P.pip) { e.stopPropagation(); openWord(wEl.textContent, Number($('ovDe').dataset.i)); }
     });
     $('ovTr').addEventListener('click', () => { if (settings.blurTr) $('ovl').classList.toggle('revealed'); });
 
