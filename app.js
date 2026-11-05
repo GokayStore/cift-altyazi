@@ -874,6 +874,18 @@ if (typeof window !== 'undefined') (function () {
         if (v.paused) v.play();
       }
     });
+    const keysOn = e => P.rec && !$('playerView').hidden && $('sheet').hidden && $('reviewView').hidden && !e.ctrlKey && !e.metaKey && !e.altKey &&
+      !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range');
+    document.addEventListener('keydown', e => {
+      if (!keysOn(e)) return;
+      const k = e.key;
+      if (k === ' ' || k === 'k' || k === 'K') { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+      else if (k === 'ArrowLeft') { e.preventDefault(); seekCue(-1); showUI(); }
+      else if (k === 'ArrowRight') { e.preventDefault(); seekCue(1); showUI(); }
+      else if (k === 'l' || k === 'L') { e.preventDefault(); $('bLoop').click(); }
+      else if (k === 'Escape') { e.preventDefault(); if (!$('pop').hidden) $('pop').hidden = true; else closePlayer(); }
+    });
+    document.addEventListener('keyup', e => { if (e.key === ' ' && keysOn(e)) e.preventDefault(); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && !vid().paused) takeWake(); });
   }
 
