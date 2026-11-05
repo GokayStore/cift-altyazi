@@ -236,8 +236,23 @@ function intervalLabel(card, grade, now) {
 }
 function isDue(w, now) { return (w.due || 0) <= now; }
 
+/* ---------- Yedek: birleştirme yardımcıları ---------- */
+function mergeVideoRecord(ex, inc) {
+  const out = Object.assign({}, ex);
+  if (Array.isArray(ex.cues) && Array.isArray(inc.cues) && ex.cues.length === inc.cues.length) {
+    out.cues = ex.cues.map((c, i) => (!c.tr && inc.cues[i].tr) ? Object.assign({}, c, { tr: inc.cues[i].tr }) : c);
+  }
+  out.fav = Object.assign({}, inc.fav || {}, ex.fav || {});
+  return out;
+}
+function mergeWord(a, b) { return (b.reps || 0) > (a.reps || 0) ? b : a; }
+function nextOffset(range, fallback) { const m = /bytes=0-(\d+)/.exec(range || ''); return m ? Number(m[1]) + 1 : fallback; }
+function validBackup(j) {
+  return !!j && j.app === 'cift-altyazi' && Array.isArray(j.videos) && Array.isArray(j.words);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { tokenizeDe, parseWordInfo, nextReview, intervalLabel, isDue, mergeFragments, pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
+  module.exports = { nextOffset, mergeVideoRecord, mergeWord, validBackup, tokenizeDe, parseWordInfo, nextReview, intervalLabel, isDue, mergeFragments, pieceRanges, splitCue, fixCues, normalizeCues, parseTimeStr, parseSubtitleFile, parsePasted, youtubeId, parseTranslation, findCueIndex, usageCost, fmtDur, fmtHMS, fmtMoney };
 }
 
 if (typeof window !== 'undefined') (function () {
@@ -330,7 +345,7 @@ if (typeof window !== 'undefined') (function () {
   })();
 
   const SKEY = 'ciftaltyazi.ayar.v2';
-  const defaults = { anthropic: '', model: 'claude-haiku-5-5', proxy: '', fontSize: 22, showDe: true, showTr: true, blurTr: false };
+  const defaults = { anthropic: '', model: 'claude-haiku-5-5', proxy: '', gClient: '', fontSize: 22, showDe: true, showTr: true, blurTr: false };
   let settings = Object.assign({}, defaults);
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SKEY) || '{}')); } catch (_) { /* boş */ }
   function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch (_) { /* özel mod */ } }
@@ -453,14 +468,17 @@ if (typeof window !== 'undefined') (function () {
       const job = jobs.get(rec.id);
       const n = rec.cues ? rec.cues.length : 0, tr = rec.cues ? rec.cues.filter(c => c.tr).length : 0;
       const meta = [fmtDur(rec.duration), fmtSize(rec.size), `çevrilen ${tr}/${n}`];
+      if (settings.gClient) meta.push(rec.driveId ? 'Drive\'da' : 'Drive\'da yok');
       if (rec.usage && (rec.usage.i || rec.usage.o)) meta.push('maliyet ' + fmtMoney(usageCost(rec.usage, rec.model)));
       let body;
       if (job) {
         body = `<div class="bar"><i style="width:${Math.round((job.frac || 0) * 100)}%"></i></div><p class="state">${esc(job.text)}</p>
                 <div class="row"><button data-act="cancel" data-id="${rec.id}" class="ghost">Durdur</button></div>`;
       } else {
-        body = `${!rec.hasFile ? '<p class="state">Video uygulamaya kaydedilemedi. Oynatırken dosyayı seçeceksin.</p>' : ''}
+        const away = !rec.hasFile && rec.driveId;
+        body = `${!rec.hasFile ? (away ? '<p class="state">Video Drive\'da duruyor, bu cihazda yok.</p>' : '<p class="state">Video bu cihazda kayıtlı değil. Oynatırken dosyayı seçeceksin.</p>') : ''}
                 <div class="row"><button data-act="play" data-id="${rec.id}" class="primary">Oynat</button>
+                ${away ? `<button data-act="dl" data-id="${rec.id}" class="ghost">Cihaza indir</button>` : ''}
                 ${tr < n ? `<button data-act="all" data-id="${rec.id}" class="ghost">Hepsini çevir</button>` : ''}
                 <button data-act="del" data-id="${rec.id}" class="ghost danger">Sil</button></div>`;
       }
@@ -487,16 +505,72 @@ if (typeof window !== 'undefined') (function () {
         <select id="kModel">${Object.entries(MODELS).map(([k, m]) => `<option value="${k}" ${settings.model === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select></label>
       <label class="field"><span>YouTube altyazı sunucusu adresi (isteğe bağlı)</span>
         <input id="kProxy" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…workers.dev" value="${esc(settings.proxy)}"></label>
-      <p class="hint">Anahtar yalnızca bu telefonda saklanır ve doğrudan Anthropic'e gönderilir. Sunucu adresi boşsa YouTube linki yerine altyazı metnini yapıştırırsın.</p>
+      <div class="field"><span>Yedek (telefon ve bilgisayar arasında taşımak için)</span>
+        <div class="row"><button id="bkOut" class="ghost">Yedek dosyası oluştur</button><label class="btn ghost">Yedekten yükle<input id="bkIn" type="file" accept=".json,application/json" hidden></label></div>
+        <p class="hint">Altyazılar, çeviriler, kaydedilen kelimeler ve cümleler dosyaya girer. Videolar ve API anahtarı girmez.</p></div>
+      <label class="field"><span>Google Drive istemci kimliği (Client ID, isteğe bağlı)</span>
+        <input id="kGoogle" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123456-abc….apps.googleusercontent.com" value="${esc(settings.gClient)}"></label>
+      <p class="hint">Anahtar yalnızca bu cihazda saklanır ve doğrudan Anthropic'e gönderilir. Sunucu adresi boşsa YouTube linki yerine altyazı metnini yapıştırırsın.</p>
       <div class="row"><button id="sSave" class="primary">Kaydet</button><button id="sCancel" class="ghost">Kapat</button></div>`, b => {
       b.querySelector('#sSave').onclick = () => {
         settings.anthropic = b.querySelector('#kAnth').value.trim();
         settings.model = b.querySelector('#kModel').value;
         settings.proxy = b.querySelector('#kProxy').value.trim().replace(/\/+$/, '');
-        saveSettings(); closeSheet(); toast('Kaydedildi.');
+        settings.gClient = b.querySelector('#kGoogle').value.trim();
+        saveSettings(); closeSheet(); toast('Kaydedildi.'); syncVisibility();
       };
       b.querySelector('#sCancel').onclick = closeSheet;
+      b.querySelector('#bkOut').onclick = exportBackup;
+      b.querySelector('#bkIn').onchange = e => { const f = e.target.files[0]; if (f) importBackup(f); };
     });
+  }
+
+  async function buildBackup() {
+    const vs = await DB.all(), ws = await DB.allWords();
+    return { app: 'cift-altyazi', v: 1, exportedAt: Date.now(), videos: vs, words: ws };
+  }
+  async function mergeBackup(j) {
+    let addV = 0, mergedV = 0, addW = 0;
+    const have = await DB.all();
+    for (const inc of j.videos) {
+      if (!inc || !inc.id || !Array.isArray(inc.cues)) continue;
+      const ex = have.find(v => v.id === inc.id || (v.name === inc.name && v.size === inc.size));
+      if (ex) { const m = mergeVideoRecord(ex, inc); if (!m.driveId && inc.driveId) m.driveId = inc.driveId; await DB.put(m); mergedV++; }
+      else { const rec = Object.assign({}, inc, { hasFile: false }); await DB.put(rec); have.push(rec); addV++; }
+    }
+    const haveW = new Map((await DB.allWords()).map(w => [w.id, w]));
+    for (const inc of j.words) {
+      if (!inc || !inc.id) continue;
+      const ex = haveW.get(inc.id);
+      if (!ex) { await DB.putWord(inc); addW++; } else { const m = mergeWord(ex, inc); if (m !== ex) await DB.putWord(m); }
+    }
+    return { addV, mergedV, addW };
+  }
+
+  async function exportBackup() {
+    try {
+      const data = JSON.stringify(await buildBackup());
+      const name = 'cift-altyazi-yedek-' + new Date().toISOString().slice(0, 10) + '.json';
+      const file = new File([data], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: name }); toast('Yedek hazır.'); return; }
+        catch (e) { if (e.name === 'AbortError') return; }
+      }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      toast('Yedek dosyası indirildi: ' + name);
+    } catch (e) { toast('Yedek alınamadı: ' + e.message); }
+  }
+
+  async function importBackup(file) {
+    try {
+      let j; try { j = JSON.parse(await file.text()); } catch (_) { throw new Error('Bu dosya okunamadı.'); }
+      if (!validBackup(j)) throw new Error('Bu bir Çift Altyazı yedeği değil.');
+      const { addV, mergedV, addW } = await mergeBackup(j);
+      await refresh(); await loadWords(); closeSheet();
+      toast(`Yüklendi: ${addV} yeni video, ${addW} yeni kelime${mergedV ? ', ' + mergedV + ' video birleştirildi' : ''}. Videoyu ilk oynatışta bir kez seçeceksin.`);
+    } catch (e) { toast(e.message); }
   }
 
   function askFile(message) {
@@ -536,8 +610,15 @@ if (typeof window !== 'undefined') (function () {
 
   async function onFilePicked(file) {
     const id = idOf(file);
-    const existing = await DB.get(id).catch(() => null);
-    if (existing) { toast('Bu video zaten ekli.'); return openPlayer(id); }
+    const existing = await DB.get(id).catch(() => null) || videos.find(v => v.name === file.name && v.size === file.size);
+    if (existing) {
+      if (!existing.hasFile) {
+        try { await DB.putFile(existing.id, file); existing.hasFile = true; await DB.put(existing); await refresh(); toast('Video eklendi, altyazı hazırdı.'); }
+        catch (_) { toast('Video uygulamaya sığmadı.'); }
+        return;
+      }
+      toast('Bu video zaten ekli.'); return openPlayer(existing.id);
+    }
     const dur = await probeDuration(file);
     if (!isFinite(dur) || dur <= 0) { toast('Bu dosya Safari\'de açılamıyor. Videoyu MP4 (H.264) olarak indir.'); return; }
     openSheet(`
@@ -583,7 +664,11 @@ if (typeof window !== 'undefined') (function () {
   async function getBlob(rec) {
     const blob = await DB.getFile(rec.id).catch(() => null);
     if (blob) return blob;
-    return askFile('"' + rec.name + '" uygulamaya kaydedilmemiş. Aynı videoyu Dosyalar\'dan bir kez seç.');
+    const f = await askFile('"' + rec.name + '" bu cihazda kayıtlı değil. Aynı videoyu bir kez seç, bir daha sorulmaz.');
+    if (!f) return null;
+    try { await DB.putFile(rec.id, f); rec.hasFile = true; await DB.put(rec); }
+    catch (_) { toast('Video uygulamaya sığmadı. Her açışta yine seçmen gerekecek.'); }
+    return f;
   }
 
   /* --- oynatıcı --- */
@@ -1045,6 +1130,215 @@ if (typeof window !== 'undefined') (function () {
     });
   }
 
+  /* ---------- Bölüm 6: Google Drive eşitleme ---------- */
+  const GSCOPE = 'https://www.googleapis.com/auth/drive.file';
+  const GFOLDER = 'Çift Altyazı', GMETA = 'ciftaltyazi-meta.json', CHUNK = 8 * 1024 * 1024;
+  const G = { token: '', exp: 0 };
+  let syncing = false;
+
+  function syncVisibility() { const b = $('btnSync'); if (b) b.hidden = !settings.gClient; }
+  function setSync(t) { const e = $('syncState'); if (e) { e.textContent = t || ''; e.hidden = !t; } }
+
+  function loadGis() {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
+    return new Promise((res, rej) => {
+      const msg = 'Google\'a ulaşılamadı. İnternet açık mı?';
+      const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+      const t = setTimeout(() => rej(new Error(msg)), 10000);
+      s.onload = () => { clearTimeout(t); res(); };
+      s.onerror = () => { clearTimeout(t); rej(new Error(msg)); };
+      document.head.appendChild(s);
+    });
+  }
+  function gAuth() {
+    if (G.token && Date.now() < G.exp - 60000) return Promise.resolve(G.token);
+    if (!settings.gClient) return Promise.reject(new Error('Önce Ayarlar\'a Google Drive istemci kimliğini gir.'));
+    return new Promise((res, rej) => {
+      loadGis().then(() => {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: settings.gClient, scope: GSCOPE,
+          callback: r => {
+            if (r.error) rej(new Error('Google girişi olmadı: ' + (r.error_description || r.error)));
+            else { G.token = r.access_token; G.exp = Date.now() + (Number(r.expires_in) || 3600) * 1000; res(G.token); }
+          },
+          error_callback: e => rej(new Error('Google girişi iptal oldu ya da engellendi' + (e && e.type ? ' (' + e.type + ')' : '') + '.'))
+        });
+        client.requestAccessToken();
+      }, rej);
+    });
+  }
+  async function gFetch(token, url, init, signal) {
+    const h = Object.assign({ Authorization: 'Bearer ' + token }, (init && init.headers) || {});
+    try { return await fetchRetry(url, Object.assign({}, init, { headers: h }), signal); }
+    catch (e) {
+      if (/^401/.test(e.message)) { G.token = ''; throw new Error('Google oturumu bitti. Tekrar dene.'); }
+      if (/^403/.test(e.message) && /accessNotConfigured|has not been used|Drive API/i.test(e.message)) throw new Error('Google Drive API açık değil. Kurulumda "Google Drive API"yi etkinleştir.');
+      throw e;
+    }
+  }
+  const gq = encodeURIComponent;
+  async function gFolder(token) {
+    const r = await gFetch(token, 'https://www.googleapis.com/drive/v3/files?fields=files(id)&q=' + gq("mimeType='application/vnd.google-apps.folder' and name='" + GFOLDER + "' and trashed=false"));
+    const j = await r.json();
+    if (j.files && j.files[0]) return j.files[0].id;
+    const c = await gFetch(token, 'https://www.googleapis.com/drive/v3/files?fields=id', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: GFOLDER, mimeType: 'application/vnd.google-apps.folder' }) });
+    return (await c.json()).id;
+  }
+  async function gList(token, folderId) {
+    const out = []; let page = '';
+    do {
+      const r = await gFetch(token, 'https://www.googleapis.com/drive/v3/files?pageSize=200&fields=' + gq('nextPageToken,files(id,name,size,mimeType)') +
+        '&q=' + gq("'" + folderId + "' in parents and trashed=false") + (page ? '&pageToken=' + gq(page) : ''));
+      const j = await r.json(); out.push(...(j.files || [])); page = j.nextPageToken || '';
+    } while (page);
+    return out;
+  }
+  async function gPutMeta(token, folderId, existingId, text) {
+    if (existingId) {
+      await gFetch(token, 'https://www.googleapis.com/upload/drive/v3/files/' + existingId + '?uploadType=media', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: text });
+      return existingId;
+    }
+    const b = 'ca' + Math.random().toString(36).slice(2);
+    const body = '--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify({ name: GMETA, parents: [folderId] }) +
+      '\r\n--' + b + '\r\nContent-Type: application/json\r\n\r\n' + text + '\r\n--' + b + '--';
+    const r = await gFetch(token, 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { 'content-type': 'multipart/related; boundary=' + b }, body });
+    return (await r.json()).id;
+  }
+
+  async function gUpload(token, folderId, rec, file, onProgress, signal) {
+    const mime = file.type || 'video/mp4';
+    const init = await gFetch(token, 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(file.size) },
+      body: JSON.stringify({ name: rec.name, parents: [folderId], mimeType: mime })
+    }, signal);
+    const url = init.headers.get('Location');
+    if (!url) throw new Error('Drive yükleme adresi verilmedi.');
+    let off = 0;
+    while (off < file.size) {
+      const end = Math.min(off + CHUNK, file.size);
+      let res, lastErr;
+      for (let a = 0; a < 3; a++) {
+        try {
+          res = await fetch(url, { method: 'PUT', headers: { 'Content-Range': 'bytes ' + off + '-' + (end - 1) + '/' + file.size }, body: file.slice(off, end), signal });
+          break;
+        } catch (e) { if (e.name === 'AbortError') throw e; lastErr = e; await sleep(1500 * (a + 1), signal); }
+      }
+      if (!res) throw new Error('Bağlantı koptu: ' + (lastErr && lastErr.message));
+      if (res.status === 200 || res.status === 201) { onProgress(1); return (await res.json()).id; }
+      if (res.status === 308) { off = Math.max(off, Math.min(nextOffset(res.headers.get('Range'), end), end)); onProgress(off / file.size); continue; }
+      if (res.status === 401) { G.token = ''; throw new Error('Google oturumu bitti. Tekrar dene.'); }
+      throw new Error('Drive yüklemesi başarısız: ' + res.status);
+    }
+    throw new Error('Drive yüklemesi tamamlanmadı.');
+  }
+
+  async function gDownload(token, fileId, size, mime, onProgress, signal) {
+    const url = 'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media';
+    const parts = []; let off = 0;
+    try {
+      while (off < size) {
+        const end = Math.min(off + CHUNK, size) - 1;
+        const r = await gFetch(token, url, { headers: { Range: 'bytes=' + off + '-' + end } }, signal);
+        const b = await r.blob(); if (!b.size) throw new Error('Boş parça geldi.');
+        parts.push(b); off += b.size; onProgress(Math.min(1, off / size));
+      }
+    } catch (e) {
+      if (e.name === 'AbortError' || off > 0 || !(e instanceof TypeError)) throw e;
+      const r = await gFetch(token, url, {}, signal);
+      parts.length = 0; parts.push(await r.blob()); onProgress(1);
+    }
+    return new Blob(parts, { type: mime || 'video/mp4' });
+  }
+
+  async function patchRec(id, fn) { const cur = await DB.get(id); if (!cur) return; fn(cur); await DB.put(cur); }
+
+  function confirmUploads(list) {
+    return new Promise(resolve => {
+      let done = false;
+      sheetClose = () => { if (!done) resolve(false); };
+      const total = list.reduce((a, r) => a + (r.size || 0), 0);
+      openSheet(`<h2>Drive'a yüklensin mi?</h2>
+        <p>${list.length} video yüklenecek, toplam ${fmtSize(total)}:</p>
+        <p class="hint">${list.map(r => esc(r.name)).join('<br>')}</p>
+        <p class="hint">Yükleme internet harcar. Wi-Fi'da olduğundan emin ol. Yüklenirken uygulamayı açık tut.</p>
+        <div class="row"><button id="cuYes" class="primary">Yükle</button><button id="cuNo" class="ghost">Şimdilik atla</button></div>`, b => {
+        b.querySelector('#cuYes').onclick = () => { done = true; closeSheet(); resolve(true); };
+        b.querySelector('#cuNo').onclick = closeSheet;
+      });
+    });
+  }
+
+  async function driveSync() {
+    if (syncing) return;
+    if (!settings.gClient) { openSettings('Önce Google Drive istemci kimliğini gir.'); return; }
+    syncing = true; $('btnSync').disabled = true;
+    try {
+      setSync('Google\'a bağlanılıyor…');
+      const token = await gAuth();
+      setSync('Drive klasörü kontrol ediliyor…');
+      const folderId = await gFolder(token);
+      let files = await gList(token, folderId);
+      const metaFile = files.find(f => f.name === GMETA);
+      let added = '';
+      if (metaFile) {
+        setSync('Drive\'daki liste okunuyor…');
+        const r = await gFetch(token, 'https://www.googleapis.com/drive/v3/files/' + metaFile.id + '?alt=media');
+        let j = null; try { j = JSON.parse(await r.text()); } catch (_) { /* bozuk */ }
+        if (validBackup(j)) { const m = await mergeBackup(j); added = m.addV ? m.addV + ' yeni video listeye eklendi. ' : ''; }
+      }
+      await refresh(); await loadWords();
+      // Drive'daki dosyalarla eşleştir
+      for (const rec of videos) {
+        const f = files.find(x => x.name !== GMETA && x.name === rec.name && Number(x.size) === rec.size);
+        if (f && (rec.driveId !== f.id || !rec.mime)) await patchRec(rec.id, c => { c.driveId = f.id; c.mime = f.mimeType || c.mime; });
+      }
+      await refresh();
+      // bu cihazda olup Drive'da olmayanlar
+      const ups = videos.filter(r => r.hasFile && !r.driveId);
+      let uploaded = 0, failed = '';
+      if (ups.length && await confirmUploads(ups)) {
+        for (const rec of ups) {
+          const file = await DB.getFile(rec.id).catch(() => null);
+          if (!file) continue;
+          const ctl = new AbortController();
+          jobs.set(rec.id, { ctl, text: 'Drive\'a yükleniyor… %0', frac: 0 }); renderList();
+          try {
+            const id = await gUpload(token, folderId, rec, file, f => { const j = jobs.get(rec.id); if (j) { j.frac = f; j.text = 'Drive\'a yükleniyor… %' + Math.round(f * 100); renderList(); } }, ctl.signal);
+            await patchRec(rec.id, c => { c.driveId = id; c.mime = file.type || 'video/mp4'; }); uploaded++;
+          } catch (e) { if (e.name === 'AbortError') { failed = 'Yükleme durduruldu. '; break; } failed = 'Yükleme yarıda kaldı: ' + explain(e) + ' '; break; }
+          finally { jobs.delete(rec.id); renderList(); }
+        }
+        await refresh();
+      }
+      setSync('Liste Drive\'a yazılıyor…');
+      files = metaFile ? files : await gList(token, folderId);
+      const mf = metaFile || files.find(f => f.name === GMETA);
+      await gPutMeta(token, folderId, mf && mf.id, JSON.stringify(await buildBackup()));
+      const away = videos.filter(r => !r.hasFile && r.driveId).length;
+      toast(`${failed}Eşitlendi. ${added}${uploaded ? uploaded + ' video Drive\'a yüklendi. ' : ''}${away ? away + ' video bu cihazda yok, "Cihaza indir"e bas.' : ''}`.trim());
+    } catch (e) { toast('Eşitlenemedi: ' + explain(e)); }
+    finally { syncing = false; $('btnSync').disabled = false; setSync(''); await refresh(); }
+  }
+
+  async function driveDownload(rec, thenPlay) {
+    if (jobs.has(rec.id)) return;
+    let token;
+    try { token = await gAuth(); } catch (e) { toast(explain(e)); return; }
+    const ctl = new AbortController();
+    jobs.set(rec.id, { ctl, text: 'Drive\'dan indiriliyor… %0', frac: 0 }); renderList();
+    let ok = false;
+    try {
+      const blob = await gDownload(token, rec.driveId, rec.size, rec.mime, f => { const j = jobs.get(rec.id); if (j) { j.frac = f; j.text = 'Drive\'dan indiriliyor… %' + Math.round(f * 100); renderList(); } }, ctl.signal);
+      if (blob.size !== rec.size) throw new Error('Dosya eksik indi (' + blob.size + ' / ' + rec.size + ' bayt). Tekrar dene.');
+      await DB.putFile(rec.id, blob);
+      await patchRec(rec.id, c => { c.hasFile = true; });
+      ok = true; toast('Video bu cihaza indirildi.');
+    } catch (e) { if (e.name !== 'AbortError') toast('İndirilemedi: ' + explain(e)); }
+    finally { jobs.delete(rec.id); await refresh(); }
+    if (ok && thenPlay) openPlayer(rec.id);
+  }
+
   function init() {
     $('btnSettings').onclick = () => openSettings();
     const pick = $('filePick');
@@ -1054,7 +1348,19 @@ if (typeof window !== 'undefined') (function () {
     $('list').addEventListener('click', async e => {
       const b = e.target.closest('button[data-act]'); if (!b) return;
       const id = b.dataset.id, act = b.dataset.act;
-      if (act === 'play') openPlayer(id);
+      if (act === 'play') {
+        const rec = videos.find(v => v.id === id);
+        if (rec && !rec.hasFile && rec.driveId && settings.gClient) {
+          openSheet(`<h2>Video bu cihazda yok</h2><p class="fname">${esc(rec.name)}</p><p class="meta">Drive'da duruyor · ${fmtSize(rec.size)}</p>
+            <p class="hint">İndirmek internet harcar, Wi-Fi'da olduğundan emin ol.</p>
+            <div class="row"><button id="pDl" class="primary">Drive'dan indir ve oynat</button><button id="pPick" class="ghost">Dosyadan seç</button><button id="pNo" class="ghost">Vazgeç</button></div>`, bb => {
+            bb.querySelector('#pNo').onclick = closeSheet;
+            bb.querySelector('#pPick').onclick = () => { closeSheet(); openPlayer(id); };
+            bb.querySelector('#pDl').onclick = () => { closeSheet(); driveDownload(rec, true); };
+          });
+        } else openPlayer(id);
+      }
+      else if (act === 'dl') { const rec = videos.find(v => v.id === id); if (rec) driveDownload(rec, false); }
       else if (act === 'cancel') { const j = jobs.get(id); if (j) j.ctl.abort(); }
       else if (act === 'all') { const rec = await DB.get(id); if (rec) translateAll(rec); }
       else if (act === 'del') {
@@ -1068,6 +1374,9 @@ if (typeof window !== 'undefined') (function () {
     });
     bindPlayer();
     bindWords();
+    $('btnSync').onclick = driveSync;
+    syncVisibility();
+    if (settings.gClient) loadGis().catch(() => {});
     applyView();
     refresh();
     loadWords();

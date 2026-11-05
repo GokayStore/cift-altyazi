@@ -201,7 +201,7 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
 <body>
 <main id="libraryView">
   <header class="top">
-    <h1>Çift Altyazı <small style="font-size:11px;font-weight:400;opacity:.55">v6</small></h1>
+    <h1>Çift Altyazı <small style="font-size:11px;font-weight:400;opacity:.55">v8</small></h1>
     <div class="topbtns">
       <button id="btnWords" class="pill">Defter <b id="dueBadge" hidden>0</b></button>
       <button id="btnSettings" class="icon-btn" aria-label="Ayarlar">
@@ -211,6 +211,8 @@ main { max-width: 640px; margin: 0 auto; padding-block: 18px 40px; display: grid
   </header>
   <section class="hero">
     <button id="btnAdd" class="primary big">Video ekle</button>
+    <button id="btnSync" class="ghost" hidden>Drive ile eşitle</button>
+    <p id="syncState" class="hint" hidden></p>
     <p class="hint">İndirdiğin Almanca videoyu seç, altyazısını YouTube linkinden ya da metinden ekle. Türkçe çeviri izlerken gelir ve telefonda kalır.</p>
   </section>
   <section id="list" class="list" aria-live="polite"></section>
